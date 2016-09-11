@@ -122,7 +122,7 @@ cmValRF <- confusionMatrix(validate$classe, predicRFval)
 resultsTable <- data.frame(method = "RF", accuracyTest = cmTestRF$overall[1], accuracyVal = cmValRF$overall[1])
 ```
 
-```{r, cache=TRUE}
+```{r, cache=TRUE, message=FALSE}
 #
 #   Try GBM
 #
@@ -134,7 +134,7 @@ cmValGBM <- confusionMatrix(validate$classe, predictGBMval)
 resultsTable <- rbind(resultsTable, data.frame( method = "GBM", accuracyTest = cmTestGBM$overall[1], accuracyVal = cmValGBM$overall[1]))
 ```
 
-```{r, cache=TRUE}
+```{r, cache=TRUE, message=FALSE, warning=FALSE}
 #
 #   Try LDA
 #
@@ -202,7 +202,7 @@ modelCOMB <- train(classe ~., method="rf",data=combineData)
 predicCOMBval <- predict(modelCOMB, combineData)
 cmCOMB <- confusionMatrix(combineData$classe, predicCOMBval)
 ```
-The accuracy of the stacked/combine model is `r cmCOMB$overall[1]` does not improve the accuracy of the RF model of  `r cmValRF$overall[1]`  
+The accuracy of the stacked/combine model is `r cmCOMB$overall[1]` does not improve the accuracy of the RF model of  `r cmValRF$overall[1]` significantly. 
 
 ## Conclusion
 
