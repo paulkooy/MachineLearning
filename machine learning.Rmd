@@ -1,0 +1,223 @@
+---
+title: "Machine Learning"
+author: "Paul van der Kooy"
+date: "September 1, 2016"
+output: 
+  html_document: 
+    keep_md: yes
+---
+
+## Synopsis
+
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The goal of this project is to predict the manner in which they did the exercise. Testing different models showed that the Random Forest model (RF) outperformed the other models on the validation set. Further it could not by improved by stacking. 
+
+```{r, cache=TRUE, message=FALSE}
+#
+#   Load required libraries
+#
+library(caret)
+library(randomForest)
+library(rpart)
+library(knitr)
+#
+# Load Test data set
+#
+if (!exists("./pml-testing.csv")) {
+    fileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+    download.file(fileUrl, destfile = "./pml-testing.csv", method = "curl")
+}
+testing <- read.table("./pml-testing.csv", sep = ",", header = TRUE, na.strings = c("NA", "#DIV/0!"))
+#
+# Load Training data set
+#
+if (!exists("./pml-training.csv")) {
+    fileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+    download.file(fileUrl, destfile = "./pml-training.csv", method = "curl")
+    dateDownloaded <- date()
+    dateDownloaded
+}
+modelingData <- read.table("./pml-training.csv", sep = ",", header = TRUE, na.strings = c("NA", "#DIV/0!"))
+```
+
+## Data & Exploratory Analysis
+
+The data for this project come from this source: <http://groupware.les.inf.puc-rio.br/har> (see the section on the Weight Lifting Exercise Dataset). The manner in which the participants performed barbell lifts is logged in variable "classe". Values of "classe" are:
+
+Class A:  A exactly according to the specification  
+Class B:  throwing the elbows to the front  
+Class C:  lifting the dumbbell only halfway  
+Class D:  lowering the dumbbell only halfway  
+Class E:  and throwing the hips to the front  
+
+###     Approach
+
+Use part of training set to validata/test the results and prepare the training data set for modeling.
+
+```{r, cache=TRUE}
+#
+#   Drop all empty columns (filled with NA's and hence not predicting anything)
+#
+modelingData <- modelingData[, !sapply(modelingData, function(x)all(is.na(x))), drop=F]
+#
+#   Drop all descriptive (non sensor) data, as these are obviously no predictors for the outcome
+#
+modelingData <- modelingData[,-(1:7)]
+#
+#   Drop near zero variance columns
+#
+nzv <- nearZeroVar(modelingData, saveMetrics=TRUE)
+for(i in dim(nzv)[1]:1) {
+    if(nzv[i,4]) {modelingData[,i] <- NULL}
+}
+#   Now we have a cleansed, trimmed dataset with only sensor data of sufficient variance
+#
+#   Replace NA sensor data with 0 (zero) to meet the input criteria of some modeling algorithms
+#
+modelingDataNNA <- modelingData
+modelingDataNNA[is.na(modelingDataNNA)] <- 0
+#
+#   Devide the data into a training and validation set
+#
+set.seed(8)
+inTrain = createDataPartition(modelingDataNNA$classe , p = 3/4) [[1]]
+training = modelingDataNNA[ inTrain,] 
+validate = modelingDataNNA[-inTrain,] 
+#
+# Which variables have most impact on the outcome (Class) (PCA) 
+#   Do Principle Component Analysis
+prComp <- prcomp(~ ., data = training[,-118], na.action=na.omit)
+#   Print out the eigenvector/rotations first 5 rows and PCs
+head(prComp$rotation[, 1:5], 5)
+#
+#   Which model (Try and compare)  
+#
+resultsTable <- data.frame(method = character(), accuracyTest = numeric(), accuracyVal = numeric())
+```
+
+## Processing
+
+The training set is ordered by class, hence if we reserve a subset for model validation, this should be a randomly chosen subset. Furthermore, the PCA shows because of the ordering a correlation with the row- and window number and raw timestamps, which are obviously no predictors of the outcome (the manner in which the exercise was performed). For that reason we excluded these variables so that only accelerometers with available input remain as predictors.
+
+Based on the resulting dataset and the nature of the data and problem (classification) we tested the following classification algoritmes:  
+* Random Forest (RF)  
+* Generalized Boosted Regression (GBM)  
+* Linear Discriminant Analysis (LDA)  
+* Linear Discriminant Analysis (LDA) with Principal Component Analysis (PCA) 
+* Recursive Partitioning and Regression Trees (RPART)  
+* A stacked model of (COMB) of the top 3 models (RF, GB and LDA)  
+GLM was not used as this methods can only process 2-class outcomes, whereas our outcome contains 5 classes. Below the table with the accuracy of the models on the training and validation set for each testing method:
+
+###     Which model (Try and compare)
+
+```{r, cache=TRUE}
+#
+#   Try Random Forest
+#
+modelRF <- train(classe ~ ., data = training, method = "rf")
+predicRFtest <- predict(modelRF, training)
+cmTestRF <- confusionMatrix(training$classe, predicRFtest)
+# Validate the model with new input data  
+predicRFval <- predict(modelRF, validate)
+cmValRF <- confusionMatrix(validate$classe, predicRFval)
+resultsTable <- data.frame(method = "RF", accuracyTest = cmTestRF$overall[1], accuracyVal = cmValRF$overall[1])
+```
+
+```{r, cache=TRUE}
+#
+#   Try GBM
+#
+modelGBM <- train(classe ~ ., method="gbm", data=training, verbose=FALSE)
+predictGBMtest <- predict(modelGBM, training)
+cmTestGBM <- confusionMatrix(training$classe, predictGBMtest)
+predictGBMval <- predict(modelGBM, validate)
+cmValGBM <- confusionMatrix(validate$classe, predictGBMval)
+resultsTable <- rbind(resultsTable, data.frame( method = "GBM", accuracyTest = cmTestGBM$overall[1], accuracyVal = cmValGBM$overall[1]))
+```
+
+```{r, cache=TRUE}
+#
+#   Try LDA
+#
+modelLDA <- train(classe ~ ., method="lda", data=training)
+predictLDAtest <- predict(modelLDA, training)
+cmTestLDA <- confusionMatrix(training$classe, predictLDAtest)
+predictLDAval <- predict(modelLDA, validate)
+cmValLDA <- confusionMatrix(validate$classe, predictLDAval)
+resultsTable <- rbind(resultsTable, data.frame( method = "LDA", accuracyTest = cmTestLDA$overall[1], accuracyVal = cmValLDA$overall[1]))
+```
+
+```{r, cache=TRUE}
+#
+#   Try LDA with PCA pre-processing
+#
+modelLDAPCA <- train(classe ~ ., method="lda", preProcess="pca", data=training)
+predictLDAPCAtest <- predict(modelLDAPCA, training)
+cmTestLDAPCA <- confusionMatrix(training$classe, predictLDAPCAtest)
+predictLDAPCAval <- predict(modelLDAPCA, validate)
+cmValLDAPCA <- confusionMatrix(validate$classe, predictLDAPCAval)
+resultsTable <- rbind(resultsTable, data.frame( method = "LDA-PCA", accuracyTest = cmTestLDAPCA$overall[1], accuracyVal = cmValLDAPCA$overall[1]))
+```
+
+```{r, cache=TRUE}
+#
+#   Try RPART
+#
+modelRPART <- train(classe ~ ., method="rpart", data=training)
+predictRPARTtest <- predict(modelRPART, training)
+cmTestRPART <- confusionMatrix(training$classe, predictRPARTtest)
+predictRPARTval <- predict(modelRPART, validate)
+cmValRPART <- confusionMatrix(validate$classe, predictRPARTval)
+resultsTable <- rbind(resultsTable, data.frame( method = "RPART", accuracyTest = cmTestRPART$overall[1], accuracyVal = cmValRPART$overall[1]))
+```
+
+###     How good are the results (Accuracy and Confusion matrix)  
+
+```{r, cache=TRUE, echo=FALSE}
+#
+#   Show results
+#
+kable(resultsTable[,1:3], align = "c", row.names = FALSE)
+```
+
+Above table clearly shows that RF, GBM and LDA score higher than the others. The preferred method is RF as this delivers superior results. To determine whether stacking the top 3 methods is worthwhile the confusion matrix was observed.
+
+```{r, cache=TRUE, echo=FALSE}
+#
+#   Show results confusion matrixes of best models
+#
+kable(cmValRF$table, align = "c", caption = "Confusion matrix RF. X = Reference, Y = Prediction")
+kable(cmValGLMPCA$table, align = "c", caption = "Confusion matrix GLM with PCA. X = Reference, Y = Prediction")
+kable(cmValGLM$table, align = "c", caption = "Confusion matrix GLM. X = Reference, Y = Prediction")
+```
+
+Because of the high initial score of RF a model improvement by stacking looks doubtful. We do however give it a try with the top 3 models.
+
+```{r}
+# Stack the 3 top models with RF
+# combine the prediction results and the true results into new data frame
+combineData <- data.frame(RFpred=predicRFval, GBMpred=predictGBMval, LDApred=predictLDAval, classe=validate$classe)
+# run a Random Forest (RF) model on the combined test data
+modelCOMB <- train(classe ~., method="rf",data=combineData)
+# use the resultant model to predict on the test set
+predicCOMBval <- predict(modelCOMB, combineData)
+cmCOMB <- confusionMatrix(combineData$classe, predicCOMBval)
+```
+The accuracy of the stacked/combine model is `r cmCOMB$overall[1]` does not improve the accuracy of the RF model of  `r cmValRF$overall[1]`  
+
+## Conclusion
+
+The Random Forest model (RF) is clearly the best model for the analysis of the sensor data of the Weight Lifting Exercise Dataset. 
+Finally the best model was used on the testing set with the following result:
+
+```{r}
+#
+#   Process the test data set with the best RF model.
+#   Start with preprocessing the testing data to fit the model
+#
+testingPreped <- testing[,-(1:7)]
+testingPreped[is.na(testingPreped)] <- 0
+testingRF <- predict(modelRF, testingPreped)
+testingRF
+```
+
+
